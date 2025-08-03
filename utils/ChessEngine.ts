@@ -47,11 +47,11 @@ export class ChessEngine {
   }
 
   getState(): GameState {
-    return { ...this.state };
+    return JSON.parse(JSON.stringify(this.state));
   }
 
   loadState(state: GameState): void {
-    this.state = { ...state };
+    this.state = JSON.parse(JSON.stringify(state));
   }
 
   makeMove(from: string, to: string, promotion?: string): { success: boolean; isCheckmate: boolean; isStalemate: boolean } {
@@ -68,7 +68,7 @@ export class ChessEngine {
     const newBoard = { ...this.state.board };
     const capturedPiece = newBoard[to];
     
-    newBoard[to] = newBoard[from];
+    newBoard[to] = { ...newBoard[from] };
     delete newBoard[from];
 
     // Handle pawn promotion
@@ -85,8 +85,10 @@ export class ChessEngine {
       const rookFrom = isKingside ? `h${from[1]}` : `a${from[1]}`;
       const rookTo = isKingside ? `f${from[1]}` : `d${from[1]}`;
       
-      newBoard[rookTo] = newBoard[rookFrom];
-      delete newBoard[rookFrom];
+      if (newBoard[rookFrom]) {
+        newBoard[rookTo] = { ...newBoard[rookFrom] };
+        delete newBoard[rookFrom];
+      }
     }
 
     // Handle en passant
@@ -105,6 +107,9 @@ export class ChessEngine {
       san: this.generateSAN(from, to, piece, capturedPiece, promotion),
       fen: this.generateFEN(newBoard),
     };
+
+    // Update castling rights
+    this.updateCastlingRights(from, to, piece);
 
     // Update state
     this.state.board = newBoard;
@@ -137,9 +142,40 @@ export class ChessEngine {
     };
   }
 
+  private updateCastlingRights(from: string, to: string, piece: Piece): void {
+    // King moves
+    if (piece.type === 'king') {
+      if (piece.color === 'white') {
+        this.state.castlingRights.whiteKingside = false;
+        this.state.castlingRights.whiteQueenside = false;
+      } else {
+        this.state.castlingRights.blackKingside = false;
+        this.state.castlingRights.blackQueenside = false;
+      }
+    }
+
+    // Rook moves
+    if (piece.type === 'rook') {
+      if (from === 'a1') this.state.castlingRights.whiteQueenside = false;
+      if (from === 'h1') this.state.castlingRights.whiteKingside = false;
+      if (from === 'a8') this.state.castlingRights.blackQueenside = false;
+      if (from === 'h8') this.state.castlingRights.blackKingside = false;
+    }
+
+    // Rook captured
+    if (to === 'a1') this.state.castlingRights.whiteQueenside = false;
+    if (to === 'h1') this.state.castlingRights.whiteKingside = false;
+    if (to === 'a8') this.state.castlingRights.blackQueenside = false;
+    if (to === 'h8') this.state.castlingRights.blackKingside = false;
+  }
+
   private isValidMove(from: string, to: string): boolean {
     const piece = this.state.board[from];
     if (!piece) return false;
+
+    // Can't capture own piece
+    const targetPiece = this.state.board[to];
+    if (targetPiece && targetPiece.color === piece.color) return false;
 
     // Basic piece movement validation
     switch (piece.type) {
@@ -282,7 +318,19 @@ export class ChessEngine {
     
     if (this.isInCheck(color)) return false;
     
-    return this.isPathClear(from, to);
+    // Check if squares between king and rook are clear and not attacked
+    const squares = isKingside 
+      ? [`f${from[1]}`, `g${from[1]}`]
+      : [`d${from[1]}`, `c${from[1]}`, `b${from[1]}`];
+    
+    for (const square of squares) {
+      if (this.state.board[square]) return false;
+      if (square !== `b${from[1]}` && this.isSquareAttacked(square, color === 'white' ? 'black' : 'white')) {
+        return false;
+      }
+    }
+    
+    return true;
   }
 
   private isInCheck(color: Color): boolean {
@@ -303,11 +351,43 @@ export class ChessEngine {
 
   private isSquareAttacked(square: string, byColor: Color): boolean {
     for (const [pieceSquare, piece] of Object.entries(this.state.board)) {
-      if (piece.color === byColor && this.isValidMove(pieceSquare, square)) {
+      if (piece.color === byColor && this.canPieceAttackSquare(pieceSquare, square, piece)) {
         return true;
       }
     }
     return false;
+  }
+
+  private canPieceAttackSquare(from: string, to: string, piece: Piece): boolean {
+    switch (piece.type) {
+      case 'pawn':
+        return this.canPawnAttack(from, to, piece.color);
+      case 'rook':
+        return this.isValidRookMove(from, to);
+      case 'bishop':
+        return this.isValidBishopMove(from, to);
+      case 'queen':
+        return this.isValidQueenMove(from, to);
+      case 'king':
+        return this.isValidKingMove(from, to, piece.color) && Math.abs(from.charCodeAt(0) - to.charCodeAt(0)) <= 1;
+      case 'knight':
+        return this.isValidKnightMove(from, to);
+      default:
+        return false;
+    }
+  }
+
+  private canPawnAttack(from: string, to: string, color: Color): boolean {
+    const direction = color === 'white' ? 1 : -1;
+    const fromFile = from.charCodeAt(0);
+    const fromRank = parseInt(from[1]);
+    const toFile = to.charCodeAt(0);
+    const toRank = parseInt(to[1]);
+    
+    const rankDiff = toRank - fromRank;
+    const fileDiff = Math.abs(toFile - fromFile);
+    
+    return fileDiff === 1 && rankDiff === direction;
   }
 
   private hasLegalMoves(color: Color): boolean {
@@ -316,29 +396,35 @@ export class ChessEngine {
         for (let file = 0; file < 8; file++) {
           for (let rank = 1; rank <= 8; rank++) {
             const to = `${String.fromCharCode(97 + file)}${rank}`;
-            if (this.isValidMove(from, to)) {
-              // Check if move leaves king in check
-              const originalTo = this.state.board[to];
-              this.state.board[to] = this.state.board[from];
-              delete this.state.board[from];
-              
-              const stillInCheck = this.isInCheck(color);
-              
-              // Restore position
-              this.state.board[from] = this.state.board[to];
-              if (originalTo) {
-                this.state.board[to] = originalTo;
-              } else {
-                delete this.state.board[to];
-              }
-              
-              if (!stillInCheck) return true;
+            if (this.isValidMove(from, to) && !this.wouldBeInCheck(from, to, color)) {
+              return true;
             }
           }
         }
       }
     }
     return false;
+  }
+
+  private wouldBeInCheck(from: string, to: string, color: Color): boolean {
+    // Simulate the move
+    const originalTo = this.state.board[to];
+    const movingPiece = this.state.board[from];
+    
+    this.state.board[to] = movingPiece;
+    delete this.state.board[from];
+    
+    const inCheck = this.isInCheck(color);
+    
+    // Restore position
+    this.state.board[from] = movingPiece;
+    if (originalTo) {
+      this.state.board[to] = originalTo;
+    } else {
+      delete this.state.board[to];
+    }
+    
+    return inCheck;
   }
 
   private generateSAN(from: string, to: string, piece: Piece, captured?: Piece, promotion?: string): string {
@@ -365,7 +451,22 @@ export class ChessEngine {
       san += '=' + promotion.charAt(0).toUpperCase();
     }
     
+    // Add check/checkmate notation (simplified)
+    if (this.wouldCauseCheck(to, piece)) {
+      san += '+';
+    }
+    
     return san;
+  }
+
+  private wouldCauseCheck(to: string, piece: Piece): boolean {
+    // Simplified check detection for SAN notation
+    const opponentColor = piece.color === 'white' ? 'black' : 'white';
+    const kingSquare = this.findKing(opponentColor);
+    
+    if (!kingSquare) return false;
+    
+    return this.canPieceAttackSquare(to, kingSquare, piece);
   }
 
   private generateFEN(board: Record<string, Piece>): string {
@@ -418,11 +519,14 @@ export class ChessEngine {
 
   getPossibleMoves(square: string): string[] {
     const moves: string[] = [];
+    const piece = this.state.board[square];
+    
+    if (!piece || piece.color !== this.state.activeColor) return moves;
     
     for (let file = 0; file < 8; file++) {
       for (let rank = 1; rank <= 8; rank++) {
         const to = `${String.fromCharCode(97 + file)}${rank}`;
-        if (this.isValidMove(square, to)) {
+        if (this.isValidMove(square, to) && !this.wouldBeInCheck(square, to, piece.color)) {
           moves.push(to);
         }
       }

@@ -7,12 +7,14 @@ import {
   useColorScheme,
   Alert,
   Dimensions,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ChessBoard } from '@/components/ChessBoard';
 import { GameHeader } from '@/components/GameHeader';
 import { GameControls } from '@/components/GameControls';
 import { MoveHistory } from '@/components/MoveHistory';
+import { NewGameModal } from '@/components/NewGameModal';
 import { ChessEngine } from '@/utils/ChessEngine';
 import { GameState, GameMode, TimeControl } from '@/types/chess';
 
@@ -26,32 +28,62 @@ export default function PlayScreen() {
   const [whiteTime, setWhiteTime] = useState(timeControl.minutes * 60);
   const [blackTime, setBlackTime] = useState(timeControl.minutes * 60);
   const [isGameActive, setIsGameActive] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [isBoardFlipped, setIsBoardFlipped] = useState(false);
+  const [showNewGameModal, setShowNewGameModal] = useState(false);
+  const [moveHistory, setMoveHistory] = useState<any[]>([]);
+  const [currentMoveIndex, setCurrentMoveIndex] = useState(-1);
 
   const engine = new ChessEngine();
 
-  const startNewGame = () => {
+  const startNewGame = (mode: GameMode, time: TimeControl) => {
     const newGame = new ChessEngine();
     setGameState(newGame.getState());
-    setWhiteTime(timeControl.minutes * 60);
-    setBlackTime(timeControl.minutes * 60);
+    setGameMode(mode);
+    setTimeControl(time);
+    setWhiteTime(time.minutes * 60);
+    setBlackTime(time.minutes * 60);
     setIsGameActive(true);
+    setIsPaused(false);
+    setMoveHistory([]);
+    setCurrentMoveIndex(-1);
+    setShowNewGameModal(false);
   };
 
   const handleMove = (from: string, to: string, promotion?: string) => {
+    if (!isGameActive || isPaused) return;
+    
     try {
       engine.loadState(gameState);
       const moveResult = engine.makeMove(from, to, promotion);
       
       if (moveResult.success) {
-        setGameState(engine.getState());
+        const newState = engine.getState();
+        setGameState(newState);
+        setMoveHistory(newState.moveHistory);
+        setCurrentMoveIndex(newState.moveHistory.length - 1);
         
         // Check for game end
         if (moveResult.isCheckmate) {
           setIsGameActive(false);
-          Alert.alert('Game Over', `${gameState.activeColor === 'white' ? 'Black' : 'White'} wins by checkmate!`);
+          Alert.alert(
+            'Checkmate!', 
+            `${gameState.activeColor === 'white' ? 'Black' : 'White'} wins!`,
+            [
+              { text: 'New Game', onPress: () => setShowNewGameModal(true) },
+              { text: 'Review', style: 'cancel' }
+            ]
+          );
         } else if (moveResult.isStalemate) {
           setIsGameActive(false);
-          Alert.alert('Game Over', 'Draw by stalemate!');
+          Alert.alert(
+            'Stalemate!', 
+            'The game is a draw.',
+            [
+              { text: 'New Game', onPress: () => setShowNewGameModal(true) },
+              { text: 'Review', style: 'cancel' }
+            ]
+          );
         }
       }
     } catch (error) {
@@ -59,16 +91,90 @@ export default function PlayScreen() {
     }
   };
 
-  const showGameModeSelector = () => {
+  const handleUndo = () => {
+    if (moveHistory.length > 0) {
+      const newHistory = moveHistory.slice(0, -1);
+      setMoveHistory(newHistory);
+      // In a real implementation, you'd reconstruct the game state
+      Alert.alert('Undo', 'Move undone');
+    }
+  };
+
+  const handleRedo = () => {
+    Alert.alert('Redo', 'Feature coming soon');
+  };
+
+  const handleResign = () => {
     Alert.alert(
-      'Select Game Mode',
-      '',
+      'Resign Game',
+      'Are you sure you want to resign?',
       [
-        { text: 'Local 2-Player', onPress: () => setGameMode('local') },
-        { text: 'vs Computer', onPress: () => setGameMode('ai') },
         { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Resign',
+          style: 'destructive',
+          onPress: () => {
+            setIsGameActive(false);
+            Alert.alert(
+              'Game Over',
+              `${gameState.activeColor === 'white' ? 'Black' : 'White'} wins by resignation!`
+            );
+          }
+        }
       ]
     );
+  };
+
+  const handleDraw = () => {
+    Alert.alert(
+      'Offer Draw',
+      'Do you want to offer a draw?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Offer Draw',
+          onPress: () => {
+            if (gameMode === 'local') {
+              Alert.alert(
+                'Draw Offered',
+                'Do you accept the draw?',
+                [
+                  { text: 'Decline', style: 'cancel' },
+                  {
+                    text: 'Accept',
+                    onPress: () => {
+                      setIsGameActive(false);
+                      Alert.alert('Game Over', 'Draw by agreement!');
+                    }
+                  }
+                ]
+              );
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handlePause = () => {
+    setIsPaused(!isPaused);
+  };
+
+  const handleFlipBoard = () => {
+    setIsBoardFlipped(!isBoardFlipped);
+  };
+
+  const handleAnalyze = () => {
+    Alert.alert('Analysis', 'Opening analysis board...');
+  };
+
+  const handleSave = () => {
+    Alert.alert('Save Game', 'Game saved successfully!');
+  };
+
+  const handleMoveSelect = (index: number) => {
+    setCurrentMoveIndex(index);
+    // In a real implementation, you'd show the position at that move
   };
 
   const styles = StyleSheet.create({
@@ -91,9 +197,14 @@ export default function PlayScreen() {
     newGameButton: {
       backgroundColor: '#4a90e2',
       paddingHorizontal: 24,
-      paddingVertical: 12,
-      borderRadius: 8,
+      paddingVertical: 14,
+      borderRadius: 12,
       marginBottom: 16,
+      shadowColor: '#4a90e2',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.3,
+      shadowRadius: 4,
+      elevation: 4,
     },
     newGameText: {
       color: 'white',
@@ -101,19 +212,34 @@ export default function PlayScreen() {
       fontWeight: '600',
       textAlign: 'center',
     },
-    gameModeButton: {
-      backgroundColor: colorScheme === 'dark' ? '#333' : '#e5e5e5',
+    statusBar: {
+      backgroundColor: colorScheme === 'dark' ? '#2a2a2a' : '#fff',
       paddingHorizontal: 16,
       paddingVertical: 8,
-      borderRadius: 6,
+      borderRadius: 8,
       marginBottom: 12,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
     },
-    gameModeText: {
-      color: colorScheme === 'dark' ? '#fff' : '#000',
+    statusText: {
       fontSize: 14,
-      textAlign: 'center',
+      color: colorScheme === 'dark' ? '#fff' : '#000',
+      fontWeight: '500',
+    },
+    gameStatus: {
+      fontSize: 12,
+      color: colorScheme === 'dark' ? '#4a90e2' : '#4a90e2',
+      fontWeight: '600',
     },
   });
+
+  const getGameStatus = () => {
+    if (!isGameActive) return 'Game Over';
+    if (isPaused) return 'Paused';
+    if (gameState.isCheck) return 'Check!';
+    return 'In Progress';
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -122,8 +248,20 @@ export default function PlayScreen() {
           whiteTime={whiteTime}
           blackTime={blackTime}
           activeColor={gameState.activeColor}
-          isGameActive={isGameActive}
+          isGameActive={isGameActive && !isPaused}
+          onPause={handlePause}
+          onFlipBoard={handleFlipBoard}
+          gameMode={gameMode === 'local' ? 'Local 2-Player' : 'vs Computer'}
         />
+
+        <View style={styles.statusBar}>
+          <Text style={styles.statusText}>
+            {gameState.activeColor === 'white' ? 'White' : 'Black'} to move
+          </Text>
+          <Text style={styles.gameStatus}>
+            {getGameStatus()}
+          </Text>
+        </View>
         
         <View style={styles.boardContainer}>
           <ChessBoard
@@ -131,30 +269,40 @@ export default function PlayScreen() {
             onMove={handleMove}
             activeColor={gameState.activeColor}
             lastMove={gameState.moveHistory[gameState.moveHistory.length - 1]}
-            isFlipped={false}
+            isFlipped={isBoardFlipped}
+            showCoordinates={true}
+            disabled={!isGameActive || isPaused}
           />
         </View>
 
-        <TouchableOpacity style={styles.newGameButton} onPress={startNewGame}>
+        <TouchableOpacity style={styles.newGameButton} onPress={() => setShowNewGameModal(true)}>
           <Text style={styles.newGameText}>New Game</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.gameModeButton} onPress={showGameModeSelector}>
-          <Text style={styles.gameModeText}>
-            Mode: {gameMode === 'local' ? 'Local 2-Player' : 'vs Computer'}
-          </Text>
-        </TouchableOpacity>
-
         <View style={styles.sidePanel}>
-          <MoveHistory moves={gameState.moveHistory} />
+          <MoveHistory 
+            moves={gameState.moveHistory} 
+            currentMoveIndex={currentMoveIndex}
+            onMoveSelect={handleMoveSelect}
+          />
           <GameControls
-            onUndo={() => {}}
-            onRedo={() => {}}
-            onResign={() => setIsGameActive(false)}
-            onDraw={() => {}}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            onResign={handleResign}
+            onDraw={handleDraw}
+            onAnalyze={handleAnalyze}
+            onSave={handleSave}
+            canUndo={moveHistory.length > 0}
+            canRedo={false}
           />
         </View>
       </View>
+
+      <NewGameModal
+        visible={showNewGameModal}
+        onClose={() => setShowNewGameModal(false)}
+        onStartGame={startNewGame}
+      />
     </SafeAreaView>
   );
 }

@@ -38,9 +38,12 @@ export function ChessPiece({ type, color, size = 36 }: ChessPieceProps) {
     piece: {
       fontSize: size,
       textAlign: 'center',
-      textShadowColor: colorScheme === 'dark' ? '#000' : '#666',
+      textShadowColor: color === 'white' 
+        ? (colorScheme === 'dark' ? '#000' : '#333')
+        : (colorScheme === 'dark' ? '#666' : '#000'),
       textShadowOffset: { width: 1, height: 1 },
       textShadowRadius: 2,
+      fontWeight: 'bold',
     },
   });
 
